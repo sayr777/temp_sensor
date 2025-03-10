@@ -1,56 +1,55 @@
 package main
 
 import (
-	"encoding/hex"
-	"machine"
-	"time"
+    "machine"
+    "time"
 
-	"tinygo.org/x/drivers/onewire"
-	"tinygo.org/x/drivers/ds18b20"
+    "tinygo.org/x/drivers/onewire"
+    "tinygo.org/x/drivers/ds18b20"
 )
 
 func main() {
-	// Define pin for DS18B20
-	pin := machine.P0_17
-	ow := onewire.New(pin)
-	romIDs, err := ow.Search(onewire.SEARCH_ROM)
-	if err != nil {
-		println(err)
-	}
-	sensor := ds18b20.New(ow)
+    // Определяем пин для DS18B20
+    pin := machine.P0_17
 
-	for {
-		time.Sleep(3 * time.Second)
+    // Инициализируем OneWire шину
+    ow := onewire.New(pin)
+    sensor := ds18b20.New(ow)
 
-		println()
-		println("Device:", machine.Device)
+    for {
+        time.Sleep(3 * time.Second)
 
-		println()
-		println("Request Temperature.")
-		for _, romid := range romIDs {
-			println("Sensor RomID: ", hex.EncodeToString(romid))
-			sensor.RequestTemperature(romid)
-		}
+        println()
+        println("Device:", machine.Device)
 
-		// wait 750ms or more for DS18B20 convert T
-		time.Sleep(1 * time.Second)
+        println()
+        println("Request Temperature.")
 
-		println()
-		println("Read Temperature")
-		for _, romid := range romIDs {
-			raw, err := sensor.ReadTemperatureRaw(romid)
-			if err != nil {
-				println(err)
-			}
-			println()
-			println("Sensor RomID: ", hex.EncodeToString(romid))
-			println("Temperature Raw value: ", hex.EncodeToString(raw))
+        // Запрашиваем температуру, используя SKIP_ROM (так как датчик один)
+        sensor.RequestTemperature(nil) // nil означает SKIP_ROM
 
-			t, err := sensor.ReadTemperature(romid)
-			if err != nil {
-				println(err)
-			}
-			println("Temperature in celsius milli degrees (°C/1000): ", t)
-		}
-	}
+        // Ждём время преобразования температуры (увеличили до 2 секунд)
+        time.Sleep(2 * time.Second)
+
+        println()
+        println("Read Temperature")
+
+        // Читаем RAW данные
+        raw, err := sensor.ReadTemperatureRaw(nil)
+        if err != nil {
+            println("Failed to read raw temperature:", err)
+            continue
+        }
+        println("Raw temperature data:", raw)
+
+        // Читаем температуру
+        t, err := sensor.ReadTemperature(nil)
+        if err != nil {
+            println("Failed to read temperature:", err)
+            continue
+        }
+
+        // Выводим температуру в миллиградусах Цельсия
+        println("Temperature in celsius milli degrees (°C/1000):", t)
+    }
 }
