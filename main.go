@@ -1,55 +1,96 @@
 package main
 
 import (
+    "encoding/binary"
     "machine"
+    "math"
     "time"
 
-    "tinygo.org/x/drivers/onewire"
+    "tinygo.org/x/bluetooth"
     "tinygo.org/x/drivers/ds18b20"
+    "tinygo.org/x/drivers/onewire"
+)
+
+var (
+    adapter  = bluetooth.DefaultAdapter
+    sensor   ds18b20.Device
+    tempChar *bluetooth.Characteristic
+)
+
+// UUID сервиса и характеристики
+var (
+    serviceUUID = bluetooth.NewUUID([16]byte{0x21, 0x9C, 0x45, 0xCE, 0x11, 0xE9, 0x89, 0x5B, 0x78, 0x4A, 0x92, 0xDF, 0x6B, 0xBC, 0xD7, 0x2A})
+    charUUID    = bluetooth.NewUUID([16]byte{0x21, 0x9C, 0x45, 0xCE, 0x11, 0xE9, 0x89, 0x5B, 0x78, 0x4A, 0x92, 0xDF, 0x6B, 0xBC, 0xD7, 0x2B})
 )
 
 func main() {
-    // Определяем пин для DS18B20
+    // Инициализация датчика DS18B20
     pin := machine.P0_17
-
-    // Инициализируем OneWire шину
     ow := onewire.New(pin)
-    sensor := ds18b20.New(ow)
+    sensor = ds18b20.New(ow)
 
+    // Инициализация BLE
+    must("enable BLE", adapter.Enable())
+
+    // Настройка рекламы
+    adv := adapter.DefaultAdvertisement()
+    must("config adv", adv.Configure(bluetooth.AdvertisementOptions{
+        LocalName:    "BLE Temp Sensor",
+        ServiceUUIDs: []bluetooth.UUID{serviceUUID},
+    }))
+    must("start adv", adv.Start())
+
+    // Создание BLE сервиса с характеристикой
+    must("add service", adapter.AddService(&bluetooth.Service{
+        UUID: serviceUUID,
+        Characteristics: []bluetooth.CharacteristicConfig{
+            {
+                UUID:  charUUID,
+                Flags: bluetooth.CharacteristicReadPermission | bluetooth.CharacteristicNotifyPermission,
+                WriteEvent: func(client bluetooth.Connection, offset int, value []byte) {
+                    // Для примера: обрабатываем запись в характеристику (можно добавить обработку)
+                    println("Received data:", value)
+                },
+            },
+        },
+    }))
+
+    // Основной цикл
     for {
+        tempBytes, err := getTemperatureBytes()
+        if err != nil {
+            println("Error reading temp:", err.Error())
+            time.Sleep(3 * time.Second)
+            continue
+        }
+
+        sendTemperature(tempBytes)
         time.Sleep(3 * time.Second)
+    }
+}
 
-        println()
-        println("Device:", machine.Device)
+func getTemperatureBytes() ([]byte, error) {
+    sensor.RequestTemperature(nil) // Запрос температуры
+    time.Sleep(750 * time.Millisecond) // Время преобразования температуры
 
-        println()
-        println("Request Temperature.")
+    temp, err := sensor.ReadTemperature(nil)
+    if err != nil {
+        return nil, err
+    }
 
-        // Запрашиваем температуру, используя SKIP_ROM (так как датчик один)
-        sensor.RequestTemperature(nil) // nil означает SKIP_ROM
+    buf := make([]byte, 4)
+    binary.LittleEndian.PutUint32(buf, math.Float32bits(float32(temp)))
+    return buf, nil
+}
 
-        // Ждём время преобразования температуры (увеличили до 2 секунд)
-        time.Sleep(2 * time.Second)
+func sendTemperature(tempBytes []byte) {
+    if tempChar != nil {
+        tempChar.Write(tempBytes) // Записываем данные в характеристику
+    }
+}
 
-        println()
-        println("Read Temperature")
-
-        // Читаем RAW данные
-        raw, err := sensor.ReadTemperatureRaw(nil)
-        if err != nil {
-            println("Failed to read raw temperature:", err)
-            continue
-        }
-        println("Raw temperature data:", raw)
-
-        // Читаем температуру
-        t, err := sensor.ReadTemperature(nil)
-        if err != nil {
-            println("Failed to read temperature:", err)
-            continue
-        }
-
-        // Выводим температуру в миллиградусах Цельсия
-        println("Temperature in celsius milli degrees (°C/1000):", t)
+func must(action string, err error) {
+    if err != nil {
+        panic("failed to " + action + ": " + err.Error())
     }
 }
